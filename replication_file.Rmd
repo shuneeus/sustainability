@@ -1,0 +1,571 @@
+Replication file for the article
+"Societal Conflict and Government Assessment of Energy Project Impacts: A Quantitative Study of Chile’s Environmental Impact Assessment Service 2012-2017"
+
+AUTHORS: 
+Sebastián Huneeus, Sergio Toro, Juan Pablo Luna, Diego Sazo, Andrés Cruz, Daniel Alcatruz, Bryan Castillo, Camila Bertranou, Javier Cisterna
+
+Correspondig authors: 
+Sebastián Huneeus, Sergio Toro, Juan Pablo Luna
+
+This file contains a dataset of 380 energy projects entering the Servicio de Evaluación Ambiental between years 2012-2017. These conflicts are matched with protests events registered by COES. 
+
+
+Packages
+```{r setup, include=FALSE}
+library(tidyverse)
+library(janitor)
+library(margins)
+library(sjPlot)
+library(fastDummies)
+library(sandwich)
+library(stargazer)
+library(readxl)
+library(ggrepel)
+library(fastDummies)
+library(cluster)
+library(Rtsne)
+
+
+options(scipen=999)
+```
+
+
+Data loading 
+
+```{r}
+df_energy<-readxl::read_excel("data_sustainability.xlsx")
+
+
+
+df_energy<-df_energy %>% mutate(d_eis=if_else(d_eis == "EIA", 1,0), 
+                     d_conflict = as.numeric(as.factor(d_conflict))-1,
+                     d_approved =  as.numeric(as.factor(d_approved))-1)
+
+
+```
+
+
+# TABLE 1
+
+ “Metrics Grouped by Statemets and Assessments: number, %, $, ratio or approval, ratio of conflicts, location (moda), ratio of technology”. 
+
+
+```{r}
+calculate_mode <- function(x) {
+  uniqx <- unique(na.omit(x))
+  uniqx[which.max(tabulate(match(x, uniqx)))]
+}
+
+
+tabl1<-df_energy %>% group_by(d_eis) %>% 
+     summarise(nro =  n(),
+        investment =  mean(investment), 
+            eis_percent  =  NA, 
+              days = mean(days), 
+              tech = calculate_mode(technology),
+  conflict_percent = sum(d_conflict==1)/nro, 
+  approved_percent = sum(d_approved==1)/nro)
+
+tabl1
+
+```
+
+
+```{r}
+
+tabl2<-df_energy %>% group_by(d_approved) %>% 
+     summarise(nro =  n(),
+        investment =  mean(investment), 
+      eis_percent  =  sum(d_eis==1)/nro, 
+              days = mean(days), 
+              tech = calculate_mode(technology),
+  conflict_percent = sum(d_conflict==1)/nro, 
+  approved_percent = NA)  
+
+tabl2
+```
+
+
+```{r}
+
+tabl3<-df_energy %>% group_by(d_conflict) %>% 
+     summarise(nro =  n(),
+        investment =  mean(investment), 
+      eis_percent  =  sum(d_eis==1)/nro,
+              days =  mean(days), 
+              tech =  calculate_mode(technology),
+  conflict_percent =  NA, 
+   approved_percent=  sum(d_approved==1)/nro) 
+
+tabl3
+```
+
+```{r}
+
+tabl1_cols2n<-tabl1 %>% select(2:ncol(tabl1))
+
+tabl1_col1<- tabl1 %>% select(1)
+
+tabl2_cols2n<-tabl2 %>% select(2:ncol(tabl2))
+
+tabl2_col1<-tabl2 %>% select(1)
+
+tabl3_cols2n<-tabl3 %>% select(2:ncol(tabl3))
+
+tabl3_col1<-tabl3 %>% select(1)
+
+tabla<-rbind(tabl1_cols2n, tabl2_cols2n, tabl3_cols2n)
+
+col1<-c("DIA", "EIA", "Rejected", "Approved", "No conflict", "With conflct")
+
+col1<-factor(col1)
+
+tablafinal<-tabla %>% mutate(col= col1) %>% relocate(col, before = nro) %>% 
+  select(-tech) %>% 
+  rename(n = before) %>% 
+  mutate_if(is.numeric, round, 2)
+
+tablafinal
+```
+
+
+## Graph the differences with error bars 
+
+```{r}
+# tend to 1.96 if sample size is big enough
+
+
+
+a<-df_energy %>% group_by(d_conflict) %>% 
+              summarise(n = n(), 
+               mean=mean(days), 
+               sd = sd(days), 
+               se = sd/sqrt(n),
+               alpha = 0.05,
+               t  = qt((1-alpha)/2 + .5, n-1), 
+               ci = t * se, 
+               upper = mean+(t*se),
+               lower = mean-(t*se), 
+               metric = "days" %>% as.factor())   # tend to 1.96 if sample size is big enough
+
+
+b<-df_energy %>% group_by(d_conflict) %>% 
+              summarise(n = n(), 
+               mean=mean(investment), 
+               sd = sd(days), 
+               se = sd/sqrt(n),
+               alpha = 0.05,
+               t  = qt((1-alpha)/2 + .5, n-1), 
+               ci = t*se, 
+               upper = mean+(t*se),
+               lower = mean-(t*se), 
+               metric = "investment" %>% as.factor())   # tend to 1.96 if sample size is big enough
+
+ci_table<-rbind(a,b)
+
+ci_table<-ci_table %>% mutate(d_conflict = as.factor(d_conflict))
+
+
+```
+
+
+```{r}
+ggplot(ci_table, aes(x = metric, y=mean, fill = d_conflict)) + 
+  geom_col(width = 0.5,  position = position_dodge(0.7)) +
+   geom_errorbar(aes(ymin=mean-ci, ymax=mean+ci), width=.3, position = position_dodge(0.7), 
+   width=0.1, colour="black", alpha=0.9, size=1) + ggtitle("95% confidence intervals in error bars") +
+   theme_classic() +
+   scale_fill_grey(start=0.5, end=0.8)
+    
+
+```
+
+
+```{r}
+a<-df_energy %>% group_by(d_conflict) %>% 
+               summarise(n = n(), 
+               prop=sum(d_approved==1)/n, 
+               sd = sd(d_approved), 
+               se = sd/sqrt(n),
+               alpha = 0.05,
+               t  = qt((1-alpha)/2 + .5, n-1), 
+               ci = t*se, 
+               upper = (sum(d_approved==1)/n)+(t*se),
+               lower = (sum(d_approved==1)/n)-(t*se), 
+               metric = "d_approved" %>% as.factor())   # tend to 1.96 if sample size is big
+
+
+b<-df_energy %>% group_by(d_conflict) %>% 
+               summarise(n = n(), 
+               prop=sum(d_eis==1)/n, 
+               sd = sd(d_eis), 
+               se = sd/sqrt(n),
+               alpha = 0.05,
+               t  = qt((1-alpha)/2 + .5, n-1), 
+               ci = t*se, 
+               upper = (sum(d_eis==1)/n)+(t*se),
+               lower = (sum(d_eis==1)/n)-(t*se), 
+               metric = "d_eia" %>% as.factor())   # tend to 1.96 if sample size is big
+
+ci_table2<-rbind(a,b)
+
+ci_table2<-ci_table2 %>% mutate(d_conflict = as.factor(d_conflict))
+
+
+```
+
+
+```{r}
+
+  ggplot(ci_table2, aes(x = metric, y=prop, fill = d_conflict)) + 
+  geom_col(width = 0.5,  position = position_dodge(0.7)) +
+   geom_errorbar(aes(ymin=prop-ci, ymax=prop+ci), width=.3, position = position_dodge(0.7), 
+   width=0.1, colour="black", alpha=0.9, size=1) + ggtitle("95% confidence intervals in error bars") +
+   theme_classic()  +
+   scale_fill_grey(start=0.5, end=0.8)
+    
+  
+```
+
+
+
+## T Test 
+
+```{r}
+
+
+ttest<-function(var1,var2, data){
+ var_uno<-data[[var1]]
+ var_dos<-data[[var2]]
+ test<-t.test(var_uno ~ var_dos, data = data)
+ return(test)
+}
+
+ttest("days", "d_conflict", df_energy) ## la segunda vble tiene que ser dicotomica pa que funque
+```
+
+ 
+Paired comparisons of two sample means and proportions 
+
+```{r}
+t.test(days~d_conflict, data = df_energy)
+t.test(investment~d_conflict, data = df_energy)
+t.test(d_eis~d_conflict, data = df_energy)
+t.test(d_approved~d_conflict, data = df_energy)
+```
+
+
+```{r}
+t.test(days~d_eis, data = df_energy)
+t.test(investment~d_eis, data = df_energy)
+t.test(d_conflict~d_eis, data = df_energy)
+t.test(aprobado~d_eis, data = df_energy)
+```
+
+```{r}
+t.test(days~d_approved, data = df_energy)
+t.test(investment~d_approved, data = df_energy)
+t.test(d_conflict~d_approved, data = df_energy)
+t.test(d_eis~d_approved, data = df_energy)
+```
+
+Interesante: t student matrix plots 
+http://www.sthda.com/english/wiki/matrix-of-student-t-test
+
+
+
+# TABLE 2  “Energy project facing organized oppositions, 2012-2017” 	
+
+
+```{r}
+
+tablaprojects<-df_energy %>% filter(d_conflict ==1) %>% select(-project_id, -n, -industry, -protest_date, -project_date, -technology, -d_bachelet, -d_conflict, -d_approved)
+
+tablaprojects
+
+```
+
+
+# TABLE 3: “Statistical models: Ordinary Least Squares and Logistic Regressions on time delays and approval rates” 
+
+
+Linear regression: fixed effects estimation
+
+```{r,  echo=FALSE}
+
+
+lm_days<-lm(days~ d_eis + investment + d_conflict  +  d_bachelet + project_year, data = df_energy)
+
+
+stargazer(lm_days, type = "text", 
+          omit = c("region", "as.factor"))
+
+```
+
+
+Sandwich standar errors. Fixed effects model
+
+
+```{r,  echo=FALSE}
+# Adjust standard errors
+cov1         <- vcovHC(lm_days, type = "HC1")
+robust_se    <- sqrt(diag(cov1))
+
+# Stargazer output (with and without RSE)
+stargazer(lm_days, type = "text",
+           se =list(robust_se),
+          omit = c("region", "as.factor"))
+
+## p value not reported, so 
+## compute p value manually 
+t.value<-lm_days$coefficients[["d_conflict"]] / robust_se[["d_conflict"]]
+
+## two tail prob: P(T > |t| n-k-1)
+2*pt(t.value, (nrow(df_energy)-ncol(df_energy)-1), lower=FALSE)
+
+### for other coefficients 
+t.values<-lm_days$coefficients / robust_se
+
+## two tail prob: P(T > |t| n-k-1)
+p.values<-2*pt(t.values, (nrow(df_energy)-ncol(df_energy)-1), lower=FALSE)
+
+# Stargazer output (with RSE)
+stargazer(lm_days, type = "text",
+           se = list(robust_se),
+           p=list(p.values), 
+           omit = c("region", "as.factor"), 
+           t = list(t.values), 
+           align = F,
+           #covariate.labels = c("D:EIA", "Investment", "D:Conflict", "D:Bachelet", "Intercept"), 
+           dep.var.labels = "Days", 
+           style = "qje") 
+           #out = "output/modelo_errores_robustos.html")
+
+```
+
+
+Logit approval 
+
+
+```{r}
+
+df_energy<-df_energy %>% mutate(aprobado = if_else(status == "Aprobado", 1,0))
+
+table(df_energy$aprobado, df_energy$d_conflict)
+
+logit_aprobado<-glm(d_approved ~ d_eis + investment + d_conflict + d_bachelet,
+                    data = df_energy, family = binomial)
+
+stargazer(logit_aprobado, type = "text", 
+          omit = c("region", "as.factor"))
+
+summary(logit_aprobado)
+
+exp(logit_aprobado$coefficients) ## interpretacion: por un incremento en una unidad d_conflicto, los odds 
+                                 ## de que un proyecto sea aprobado disminuyen en un factor de .10 (monogan, p.106)
+
+100*(exp(-1.688)-1)   ## otra interpretacion: el paso de no presencia de conflicto a si presencia de conflicto,                              disminuyen los odds de aprobacion en un 90%  (monogan, p.106)
+```
+
+
+```{r}
+#http://www.science.smith.edu/~jcrouser/SDS293/labs/lab4-r.html
+data.frame(probs = predict(logit_aprobado, type="response")) 
+
+## creo dos casos identicos, solo difieren en que uno tiene conflicto y otro no. 
+new_data<-df_energy[200,]
+new_data<-rbind(new_data, new_data[rep(1, 1), ])
+new_data[,8]<-c("0","1")
+
+new_data<-new_data %>% mutate(d_conflict = as.numeric(as.factor(d_conflict))-1)
+
+## dejando todo lo demas constante, el cambiar de conflicto a no conflicto disminuye las probabilidades de aprobacion en aproximadamente 10%
+
+data.frame(probs = predict(logit_aprobado, 
+                           newdata = new_data, 
+                           type="response"))
+
+#### REPITO EL EXPERIMENTO 
+## creo dos casos identicos, solo difieren en que uno tiene conflicto y otro no. 
+new_data2<-df_energy[127,]
+new_data2<-rbind(new_data, new_data[rep(1, 1), ])
+new_data2 = new_data2[-3,]
+new_data2[,8]<-c("0","1")
+
+new_data2<-new_data2 %>% mutate(d_conflict = as.numeric(as.factor(d_conflict))-1)
+
+data.frame(probs = predict(logit_aprobado, 
+                           newdata = new_data2, 
+                           type="response"))
+
+# mismo resultado: hay una diferencia de 10% en las probs
+```
+
+
+
+# TABLE 3 FINAL 
+
+```{r}
+
+
+stargazer(lm_days, logit_aprobado, type = "text",
+             multicolumn = FALSE,
+           digits=2, 
+           se = list(robust_se, NULL),
+           p=list(p.values), 
+           model.names = TRUE, 
+           omit = c("region", "as.factor", "tech", "proj"), 
+           t = list(t.values), 
+           align = F,
+           covariate.labels = c("D:EIA", "Investment", "D:Conflict", "D:Bachelet", "Intercept"), 
+           dep.var.labels = c("Number of days", "Approval rate"), 
+           style = "ajs", 
+           notes.append = TRUE, 
+           notes.label = c("Notes"), 
+           notes.align = "l",
+           notes = c("OLS model: year fixed effects and",
+                     "robust standard errors in parenthesis.", 
+                     "Logit model: coefficients represent log odds."), 
+            out = "output/modelos.doc")
+
+
+```
+
+
+
+# DIAGRAM 1 “Hydroelectric projects clustered by investment size, Impact Assessment, region and year of entering the EAS” 
+
+
+Analisis de clusters para un most similar case study 
+
+Todo viene de aca: 
+https://towardsdatascience.com/clustering-on-mixed-type-data-8bbd0a2569c3
+
+Elimino las variables dependientes, para no seleccionar por variable dependiente. Tambien saco la variable independiente, para tener variacion ahi. 
+
+```{r}
+df_hydro <- df_energy %>% filter(technology == "hidroeléctrica") %>% 
+            select(-n, -project_id, -technology, -days, -status, - d_approved, -industry, -protest_date, -  project_date,-d_conflict)
+
+
+dummies<-dummy_columns(df_hydro, select_columns = c("region", "d_eis", "project_year"), 
+              remove_selected_columns = TRUE, 
+              remove_first_dummy = TRUE
+              ) %>% mutate(d_bachelet = as.numeric(d_bachelet))
+
+gower_dist<-cluster::daisy(dummies[,2:ncol(dummies)], metric = "gower")
+
+gower_mat<-as.matrix(gower_dist)
+
+
+## K Medioids clustering algorithm
+
+### no number of clusters predefined, iterate betweetn 2 and 8 centroids. The silhouette width parameter helps us identify the best option(s).
+
+sil_width <- c(NA)
+
+for(i in 2:8){  
+  pam_fit <- pam(gower_dist, diss = TRUE, k = i)  
+  sil_width[i] <- pam_fit$silinfo$avg.width  
+}
+
+plot(1:8, sil_width,
+     xlab = "Number of clusters",
+     ylab = "Silhouette Width")
+lines(1:8, sil_width)
+
+```
+
+
+```{r}
+
+k <- 5
+
+pam_fit <- pam(gower_dist, diss = TRUE, k)
+
+pam_results <- dummies %>%
+  mutate(cluster = pam_fit$clustering, 
+         name = dummies$name) %>%
+  group_by(cluster) %>%
+  do(the_summary = summary(.))
+
+dummies %>% mutate(cluster = pam_fit$clustering) %>% 
+filter(cluster == 4)
+
+cluster4<-dummies %>% mutate(cluster = pam_fit$clustering) %>% filter(cluster == 4) 
+
+
+cluster4<-inner_join(cluster4, df_energy, by = "name") 
+
+inner_join(cluster4, df_energy, by = "name") 
+
+cluster4
+```
+
+
+# TABLE 4 “Cluster 4 based on Investment, Impact Assessment, Region and year entering the EAS” 
+
+```{r}
+
+cluster4_chica<-cluster4 %>%  
+  select(contains(c("name", "invest", "conf", "days", "app", "confl", "EIA"))) %>% 
+  mutate(name = str_to_title(name)) %>% 
+rename_at(vars(ends_with(c(".x"))), funs(str_remove(., (c(".x")))))
+
+cluster4_chica<-cluster4_chica %>% select(-3)
+
+cluster4_chica
+
+writexl::write_xlsx(cluster4_chica, "cluster4.xlsx")
+
+```
+
+
+
+# DIAGRAM 1: Clustering plots 
+
+```{r}
+
+
+
+tsne_obj <-Rtsne(as.matrix(gower_dist), dims = 2, perplexity = 3,is_distance = TRUE) 
+
+
+tsne_data <- tsne_obj$Y %>% 
+  data.frame() %>%
+  setNames(c("X", "Y")) %>%
+  mutate(cluster = factor(pam_fit$clustering), 
+         name = df_hydro$name)
+
+plot<-ggplot(aes(x = X, y = Y), data = tsne_data) +
+  geom_point(aes(shape = cluster), size = 6) + 
+  geom_label_repel(aes(label=ifelse(cluster==4,  str_to_title(name),'')),
+                   force =  200,
+                   point.padding = 0,
+                   size = 2.6,
+                   max.time = 1, 
+                   #force_pull = 50, 
+                   max.iter = 10000)
+
+plot + labs(y= "X", 
+            y = "Y" ) 
+
+```
+
+
+“Hydroelectric projects clustered by investment size, Impact Assessment, region and year of entering the EAS” 
+
+
+```{r}
+
+figure1<-ggplot(aes(x = X, y = Y), data = tsne_data) +
+  geom_point(aes(shape = cluster), size = 6) +
+    theme_bw()  +
+   scale_fill_grey(start=0.5, end=0.8) 
+
+ggsave(plot = figure1, width = 10, height = 7, dpi = 300, filename = "output/figure1.png")
+
+```
+
+
+
